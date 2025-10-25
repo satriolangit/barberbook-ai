@@ -153,11 +153,7 @@ Tidak boleh menambahkan teks lain di luar JSON.
 \`\`\`
 
 
-
-
----
-
-## 📘 CATATAN
+## CATATAN
 - Kamu hanya melakukan analisis intent & entities.
 - Sistem backend akan mengambil keputusan dan menindaklanjuti hasilmu.
 - Pastikan JSON yang kamu hasilkan **valid dan bisa diparse tanpa error**.

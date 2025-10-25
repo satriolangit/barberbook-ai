@@ -1,89 +1,147 @@
 import { Request, Response } from "express";
 import { analyzeMessage } from "../services/geminiOrchestrator";
+import { runConversationOrchestrator } from "../services/conversationOrchestrator";
 import pool from "../config/db";
 
+function sanitizeResponse(raw: any) {
+  if (!raw) return null;
+
+  if (typeof raw === "object" && raw.intent) return raw;
+
+  if (typeof raw === "string") {
+    const cleaned = raw
+      .replace(/```json/i, "")
+      .replace(/```/g, "")
+      .trim();
+    try {
+      return JSON.parse(cleaned);
+    } catch {
+      return { direct_reply: cleaned };
+    }
+  }
+
+  if (raw.direct_reply) {
+    const cleaned = raw.direct_reply
+      .replace(/```json/i, "")
+      .replace(/```/g, "")
+      .trim();
+    try {
+      return JSON.parse(cleaned);
+    } catch {
+      return { direct_reply: cleaned };
+    }
+  }
+
+  return raw;
+}
+
+/**
+ * Endpoint utama simulasi chat Barberbook MVP
+ * Menggunakan Gemini untuk intent detection dan Conversation Orchestrator untuk state logic
+ */
 export async function simulateChat(req: Request, res: Response) {
   const { userId, message } = req.body;
-  if (!userId || !message)
-    return res.status(400).json({ error: "userId and message required" });
 
-  // load recent conversation history (last 6 logs) for context
-  const { rows } = await pool.query(
-    `SELECT role, message, intent, entities FROM conversation_logs WHERE user_id=$1 ORDER BY created_at DESC LIMIT 6`,
-    [userId]
-  );
+  // Validasi input
+  if (!userId || !message) {
+    return res.status(400).json({ error: "userId and message are required" });
+  }
 
-  const convo = rows.map((r) => ({
-    role: r.role,
-    message: r.message,
-    intent: r.intent,
-    entities: r.entities,
-  }));
+  try {
+    // --- Step 1: Analisis intent & entities dari Gemini ---
+    const rawAi = await analyzeMessage(message, userId);
+    const ai = sanitizeResponse(rawAi);
 
-  // analyze with Gemini
+    // --- Step 2: Handle percakapan ringan (smalltalk/greeting) ---
+    if (
+      ai?.direct_reply ||
+      (ai?.intent &&
+        ["greet_user", "smalltalk", "farewell"].includes(ai.intent))
+    ) {
+      const replyText =
+        ai?.direct_reply ||
+        ai?.reply ||
+        "Halo! Ada yang bisa BarberBot bantu hari ini? ✂️";
 
-  const ai = await analyzeMessage(message, rows.length > 0 ? convo : undefined);
+      await logConversation(
+        userId,
+        "user",
+        message,
+        ai.intent ?? "smalltalk",
+        null
+      );
+      await logConversation(userId, "assistant", replyText, "smalltalk", null);
 
-  // save user message to logs
-  await pool.query(
-    `INSERT INTO conversation_logs(user_id, role, message, intent, entities) VALUES($1,$2,$3,$4,$5)`,
-    [
+      return res.json({
+        reply: replyText,
+        mode: "direct",
+        state: "idle",
+      });
+    }
+
+    // --- STEP 3: Jalankan Conversation Orchestrator ---
+    const intent = ai?.intent || "unknown_intent";
+    const entities = ai?.entities || {};
+
+    const result = await runConversationOrchestrator(userId, intent, entities);
+
+    // --- Step 4: Log conversation ke database ---
+    await logConversation(
       userId,
       "user",
       message,
-      ai.intent ?? null,
-      ai.entities ? JSON.stringify(ai.entities) : null,
-    ]
-  );
-
-  // If direct_reply -> return textual reply
-  if ((ai as any).direct_reply) {
-    const text = (ai as any).direct_reply;
-    // save bot reply
-    await pool.query(
-      `INSERT INTO conversation_logs(user_id, role, message) VALUES($1,$2,$3)`,
-      [userId, "assistant", text]
+      intent,
+      Object.keys(entities).length ? entities : null
     );
-    return res.json({ reply: text, mode: "direct" });
+    await logConversation(
+      userId,
+      "assistant",
+      result.reply,
+      result.mode === "unknown_intent" ? "unknown_intent" : intent,
+      result.data ?? null
+    );
+
+    // --- Step 5: Response ke client ---
+    return res.json({
+      reply: result.reply,
+      mode: result.mode,
+      state: result.nextState,
+      data: result.data || {},
+    });
+  } catch (error: any) {
+    console.error("❌ simulateChat error:", error);
+    return res.status(500).json({
+      error: "Terjadi kesalahan internal pada server.",
+      detail: error?.message ?? String(error),
+    });
   }
+}
 
-  // If JSON intent -> gateway decides action (for MVP we just simulate)
-  const intent = ai.intent ?? "unknown";
-  // basic simulation: if start_booking and entities complete -> create booking
-  if (
-    intent === "start_booking" &&
-    ai.entities?.service_name &&
-    ai.entities?.date &&
-    ai.entities?.time
-  ) {
-    // upsert customer (by userId as phone)
-    const name = ai.entities.customer_name ?? null;
-    const clientResult = await pool.query(
-      `INSERT INTO customers(phone, name) VALUES($1,$2) ON CONFLICT (phone) DO UPDATE SET name = COALESCE($2, customers.name) RETURNING id`,
-      [userId, name]
-    );
-    const customerId = clientResult.rows[0].id;
-    const insert = await pool.query(
-      `INSERT INTO bookings(customer_id, service_name, date, time, payment_method, status) VALUES($1,$2,$3,$4,$5,$6) RETURNING id`,
+/**
+ * Utility: Menyimpan percakapan ke tabel conversation_logs
+ *
+ * entities: Record<string, any> | null
+ */
+async function logConversation(
+  userId: string,
+  role: "user" | "assistant",
+  message: string,
+  intent: string | null,
+  entities: Record<string, any> | null
+) {
+  try {
+    await pool.query(
+      `INSERT INTO conversation_logs (user_id, role, message, intent, entities, created_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())`,
       [
-        customerId,
-        ai.entities.service_name,
-        ai.entities.date,
-        ai.entities.time,
-        ai.entities.payment_method ?? null,
-        "confirmed",
+        userId,
+        role,
+        message,
+        intent,
+        entities ? JSON.stringify(entities) : null,
       ]
     );
-    const bookingId = insert.rows[0].id;
-
-    const replyText = `✅ Booking confirmed (id: ${bookingId}) untuk ${ai.entities.service_name} pada ${ai.entities.date} ${ai.entities.time}`;
-    await pool.query(
-      `INSERT INTO conversation_logs(user_id, role, message, intent) VALUES($1,$2,$3,$4)`,
-      [userId, "assistant", replyText, "booking_confirmed"]
-    );
-    return res.json({ reply: replyText, bookingId, mode: "action" });
+  } catch (err) {
+    console.error("⚠️ Failed to log conversation:", err);
   }
-
-  // fallback: return parsed JSON so developer/gateway can take next step
-  return res.json({ reply: ai, mode: "parsed" });
 }
