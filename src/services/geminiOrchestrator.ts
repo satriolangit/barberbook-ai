@@ -5,6 +5,13 @@ import { getSession } from "./sessionManager";
 
 dotenv.config();
 
+/**
+ * analyzeMessage(message, userId)
+ * - preserves contextIntent / contextState / contextEntities from session
+ * - constructs prompt with the context block (so Gemini can continue flows)
+ * - robustly extracts JSON even if mixed with markdown or extra text
+ * - guarantees direct_reply for smalltalk (plain-text responses)
+ */
 export async function analyzeMessage(message: string, userId: string) {
   // 🧠 Ambil session user (jika ada)
   const session = await getSession(userId);
@@ -35,47 +42,93 @@ maka intent-nya tetap "start_booking" dan lengkapi entitas yang relevan.
 ${contextBlock}
 `;
 
-  // 🧩 Panggil Gemini
   const model = getGeminiModel();
 
-  const result = await model.generateContent({
-    contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
-  });
-
-  const textResponse = result.response.text();
-
-  // 🧼 Bersihkan markdown dan karakter tambahan
-  const cleaned = textResponse
-    .replace(/```json/i, "")
-    .replace(/```/g, "")
-    .trim();
-
-  // 🧩 Coba parse JSON
   try {
-    const parsed = JSON.parse(cleaned);
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
+    });
 
-    // Validasi output minimal
-    if (!parsed.intent) parsed.intent = "unknown_intent";
-    if (!parsed.entities) parsed.entities = {};
+    const textResponse = result.response.text();
 
-    // Fallback ke intent lama jika AI tidak yakin
-    if (
-      (parsed.intent === "unknown" || parsed.intent === "unknown_intent") &&
-      contextIntent &&
-      contextIntent !== "unknown_intent"
-    ) {
-      parsed.intent = contextIntent;
+    // --- Helper: extract first JSON object substring if present (balanced braces)
+    function extractFirstJson(text: string): string | null {
+      const start = text.indexOf("{");
+      if (start === -1) return null;
+      let depth = 0;
+      for (let i = start; i < text.length; i++) {
+        if (text[i] === "{") depth++;
+        if (text[i] === "}") depth--;
+        if (depth === 0) {
+          return text.slice(start, i + 1);
+        }
+      }
+      return null;
     }
 
-    return parsed;
-  } catch (err) {
-    console.error("⚠️ Gemini parse error:", err, "\nRaw output:", textResponse);
+    // --- Try to parse cleaned candidate first (strip ```json fences)
+    const cleanedCandidate = (textResponse || "")
+      .replace(/```json/gi, "")
+      .replace(/```/g, "")
+      .trim();
 
+    let parsed: any = null;
+
+    try {
+      parsed = JSON.parse(cleanedCandidate);
+    } catch {
+      // fallback: try to extract first {...} block from raw output
+      try {
+        const jsonStr = extractFirstJson(textResponse || "");
+        if (jsonStr) parsed = JSON.parse(jsonStr);
+      } catch {
+        parsed = null;
+      }
+    }
+
+    // --- If parsed JSON exists, normalize and apply intent fallback
+    if (parsed && typeof parsed === "object") {
+      if (!parsed.intent) parsed.intent = "unknown_intent";
+      if (!parsed.entities) parsed.entities = {};
+
+      // Fallback ke intent lama jika AI tidak yakin
+      if (
+        (parsed.intent === "unknown" || parsed.intent === "unknown_intent") &&
+        contextIntent &&
+        contextIntent !== "unknown_intent"
+      ) {
+        parsed.intent = contextIntent;
+      }
+
+      // Ensure smalltalk has direct_reply (use remainder or reply field)
+      if (parsed.intent === "smalltalk" && !parsed.direct_reply) {
+        // attempt to compute leftover human-readable text
+        const jsonSerialized = (() => {
+          try {
+            return JSON.stringify(parsed);
+          } catch {
+            return null;
+          }
+        })();
+        let remainder = "";
+        if (jsonSerialized) {
+          remainder = textResponse.replace(jsonSerialized, "").trim();
+        } else {
+          remainder = textResponse.trim();
+        }
+        parsed.direct_reply =
+          parsed.direct_reply || parsed.reply || remainder || null;
+      }
+
+      return parsed;
+    }
+
+    // --- If parsing failed, detect if raw text is plain text (smalltalk) ---
     const trimmed = textResponse.trim();
     const isLikelyJSON = /^[{\[]/.test(trimmed);
 
     if (!isLikelyJSON) {
-      // plain text → smalltalk / direct reply
+      // treat as smalltalk direct reply
       return {
         intent: "smalltalk",
         direct_reply: trimmed,
@@ -83,9 +136,16 @@ ${contextBlock}
       };
     }
 
-    // Kembalikan default agar sistem tidak crash
+    // --- Otherwise fallback to previous context intent to avoid losing flow ---
     return {
       intent: contextIntent || "unknown_intent",
+      entities: {},
+    };
+  } catch (error) {
+    console.error("❌ Error in analyzeMessage:", error);
+    return {
+      intent: "error",
+      direct_reply: "Maaf, terjadi kesalahan saat memproses pesan.",
       entities: {},
     };
   }

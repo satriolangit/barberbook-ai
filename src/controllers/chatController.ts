@@ -23,10 +23,14 @@ export async function simulateChat(req: Request, res: Response) {
     );
 
     // 💬 [3] Jika AI mengembalikan smalltalk atau direct reply → balas langsung
-    if (intent === "smalltalk" && direct_reply) {
+    if (intent === "smalltalk" && (direct_reply || entities?.direct_reply)) {
+      const replyText =
+        direct_reply ||
+        entities?.direct_reply ||
+        "Baik, ada yang bisa saya bantu lagi?";
       await saveLog(userId, "assistant", direct_reply, intent, {});
       return res.json({
-        reply: direct_reply,
+        reply: replyText,
         intent,
         entities,
         mode: "direct_reply",
