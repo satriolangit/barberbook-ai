@@ -2,11 +2,15 @@ import { Request, Response } from "express";
 import { analyzeMessage } from "../services/geminiOrchestrator";
 import { runConversationOrchestrator } from "../services/conversationOrchestrator";
 import { saveLog } from "../services/logService";
-import { updateSession, clearSession } from "../services/sessionManager";
+import {
+  updateSession,
+  clearSession,
+  getSession,
+} from "../services/sessionManager";
 
 export async function simulateChat(req: Request, res: Response) {
   try {
-    const userId = req.body.user_id || req.body.phone || "unknown_user";
+    const userId = req.body.userId || req.body.phone || "unknown_user";
     const userMessage = req.body.message?.trim();
 
     if (!userMessage) {
@@ -56,7 +60,14 @@ export async function simulateChat(req: Request, res: Response) {
     const result = await runConversationOrchestrator(userId, intent, entities);
 
     // 🗂️ [6] Simpan response bot ke log
-    await saveLog(userId, "assistant", result.reply, intent, result.data);
+    const latestSession = await getSession(userId);
+    await saveLog(
+      userId,
+      "assistant",
+      result.reply,
+      intent,
+      latestSession?.data || result.data
+    );
 
     // 🔄 [7] Update atau hapus session sesuai status
     if (result.mode === "completed" || result.nextState === "idle") {
