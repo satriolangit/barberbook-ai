@@ -6,7 +6,7 @@ import { updateSession, clearSession } from "../services/sessionManager";
 
 export async function simulateChat(req: Request, res: Response) {
   try {
-    const userId = req.body.user_id || req.body.phone || "unknown_user";
+    const userId = req.body.userId || req.body.phone || "unknown_user";
     const userMessage = req.body.message?.trim();
 
     if (!userMessage) {
