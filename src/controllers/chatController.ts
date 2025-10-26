@@ -1,147 +1,79 @@
 import { Request, Response } from "express";
 import { analyzeMessage } from "../services/geminiOrchestrator";
 import { runConversationOrchestrator } from "../services/conversationOrchestrator";
-import pool from "../config/db";
+import { saveLog } from "../services/logService";
+import { updateSession, clearSession } from "../services/sessionManager";
 
-function sanitizeResponse(raw: any) {
-  if (!raw) return null;
-
-  if (typeof raw === "object" && raw.intent) return raw;
-
-  if (typeof raw === "string") {
-    const cleaned = raw
-      .replace(/```json/i, "")
-      .replace(/```/g, "")
-      .trim();
-    try {
-      return JSON.parse(cleaned);
-    } catch {
-      return { direct_reply: cleaned };
-    }
-  }
-
-  if (raw.direct_reply) {
-    const cleaned = raw.direct_reply
-      .replace(/```json/i, "")
-      .replace(/```/g, "")
-      .trim();
-    try {
-      return JSON.parse(cleaned);
-    } catch {
-      return { direct_reply: cleaned };
-    }
-  }
-
-  return raw;
-}
-
-/**
- * Endpoint utama simulasi chat Barberbook MVP
- * Menggunakan Gemini untuk intent detection dan Conversation Orchestrator untuk state logic
- */
 export async function simulateChat(req: Request, res: Response) {
-  const { userId, message } = req.body;
-
-  // Validasi input
-  if (!userId || !message) {
-    return res.status(400).json({ error: "userId and message are required" });
-  }
-
   try {
-    // --- Step 1: Analisis intent & entities dari Gemini ---
-    const rawAi = await analyzeMessage(message, userId);
-    const ai = sanitizeResponse(rawAi);
+    const userId = req.body.user_id || req.body.phone || "unknown_user";
+    const userMessage = req.body.message?.trim();
 
-    // --- Step 2: Handle percakapan ringan (smalltalk/greeting) ---
-    if (
-      ai?.direct_reply ||
-      (ai?.intent &&
-        ["greet_user", "smalltalk", "farewell"].includes(ai.intent))
-    ) {
-      const replyText =
-        ai?.direct_reply ||
-        ai?.reply ||
-        "Halo! Ada yang bisa BarberBot bantu hari ini? ✂️";
+    if (!userMessage) {
+      return res.status(400).json({ error: "Message is required" });
+    }
 
-      await logConversation(
-        userId,
-        "user",
-        message,
-        ai.intent ?? "smalltalk",
-        null
-      );
-      await logConversation(userId, "assistant", replyText, "smalltalk", null);
+    // 🧾 [1] Simpan pesan user ke log
+    await saveLog(userId, "user", userMessage, "pending", null);
 
+    // 🤖 [2] Analisis pesan menggunakan Gemini (AI intent + entities)
+    const { intent, entities, direct_reply } = await analyzeMessage(
+      userMessage,
+      userId
+    );
+
+    // 💬 [3] Jika AI mengembalikan smalltalk atau direct reply → balas langsung
+    if (intent === "smalltalk" && direct_reply) {
+      await saveLog(userId, "assistant", direct_reply, intent, {});
       return res.json({
-        reply: replyText,
-        mode: "direct",
-        state: "idle",
+        reply: direct_reply,
+        intent,
+        entities,
+        mode: "direct_reply",
+        next_state: "idle",
       });
     }
 
-    // --- STEP 3: Jalankan Conversation Orchestrator ---
-    const intent = ai?.intent || "unknown_intent";
-    const entities = ai?.entities || {};
+    // ❓ [4] Jika intent tidak diketahui → fallback
+    if (!intent || intent === "unknown_intent") {
+      const fallback =
+        "Saya belum memahami maksud Anda 😅 Bisa dijelaskan sedikit lebih detail?";
+      await saveLog(userId, "assistant", fallback, "unknown_intent", {});
+      return res.json({
+        reply: fallback,
+        intent: "unknown_intent",
+        entities: {},
+        mode: "fallback",
+        next_state: "idle",
+      });
+    }
 
+    // 🧠 [5] Jalankan Conversation Orchestrator (slot filling / flow logic)
     const result = await runConversationOrchestrator(userId, intent, entities);
 
-    // --- Step 4: Log conversation ke database ---
-    await logConversation(
-      userId,
-      "user",
-      message,
-      intent,
-      Object.keys(entities).length ? entities : null
-    );
-    await logConversation(
-      userId,
-      "assistant",
-      result.reply,
-      result.mode === "unknown_intent" ? "unknown_intent" : intent,
-      result.data ?? null
-    );
+    // 🗂️ [6] Simpan response bot ke log
+    await saveLog(userId, "assistant", result.reply, intent, result.data);
 
-    // --- Step 5: Response ke client ---
+    // 🔄 [7] Update atau hapus session sesuai status
+    if (result.mode === "completed" || result.nextState === "idle") {
+      await clearSession(userId);
+    } else {
+      await updateSession(userId, result.nextState, {
+        intent,
+        ...result.data,
+      });
+    }
+
+    // 📤 [8] Kirim hasil ke frontend
     return res.json({
       reply: result.reply,
+      intent,
+      entities: result.data,
       mode: result.mode,
-      state: result.nextState,
-      data: result.data || {},
+      next_state: result.nextState,
     });
-  } catch (error: any) {
-    console.error("❌ simulateChat error:", error);
-    return res.status(500).json({
-      error: "Terjadi kesalahan internal pada server.",
-      detail: error?.message ?? String(error),
-    });
-  }
-}
-
-/**
- * Utility: Menyimpan percakapan ke tabel conversation_logs
- *
- * entities: Record<string, any> | null
- */
-async function logConversation(
-  userId: string,
-  role: "user" | "assistant",
-  message: string,
-  intent: string | null,
-  entities: Record<string, any> | null
-) {
-  try {
-    await pool.query(
-      `INSERT INTO conversation_logs (user_id, role, message, intent, entities, created_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())`,
-      [
-        userId,
-        role,
-        message,
-        intent,
-        entities ? JSON.stringify(entities) : null,
-      ]
-    );
   } catch (err) {
-    console.error("⚠️ Failed to log conversation:", err);
+    console.error("❌ Error in handleChat:", err);
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 }
