@@ -21,7 +21,7 @@ export const ConversationFlows: ConversationFlowsType = {
   start_booking: {
     intent: "start_booking",
     description: "Flow percakapan untuk membuat booking baru di Barberbook.",
-    required_slots: ["service_name", "date", "time"],
+    required_slots: ["customer_name", "service_name", "date", "time"],
     optional_slots: ["barber_name", "payment_method"],
     states: [
       {
@@ -30,6 +30,16 @@ export const ConversationFlows: ConversationFlowsType = {
         action: {
           type: "reply",
           message: "Halo! Mau booking potong rambut atau layanan lainnya?",
+        },
+        next_state: "awaiting_customer_name",
+      },
+      {
+        name: "awaiting_customer_name",
+        condition: { missing: "customer_name" },
+        trigger: [],
+        action: {
+          type: "ask",
+          message: "Boleh tahu nama Anda siapa?",
         },
         next_state: "awaiting_service_name",
       },

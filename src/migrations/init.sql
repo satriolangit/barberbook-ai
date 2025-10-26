@@ -7,14 +7,18 @@ CREATE TABLE IF NOT EXISTS customers (
 
 CREATE TABLE IF NOT EXISTS bookings (
   id SERIAL PRIMARY KEY,
-  customer_id INTEGER REFERENCES customers(id),
-  service_name TEXT NOT NULL,
-  date DATE,
-  time TIME,
-  payment_method TEXT,
-  status VARCHAR(20) DEFAULT 'pending',
-  created_at TIMESTAMP DEFAULT NOW()
+  user_id VARCHAR(50) NOT NULL,
+  service_name VARCHAR(100) NOT NULL,
+  date DATE NOT NULL,
+  time TIME NOT NULL,
+  barber_name VARCHAR(100),
+  payment_method VARCHAR(50),
+  payment_status VARCHAR(20) DEFAULT 'pending',
+  status VARCHAR(20) DEFAULT 'confirmed',
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
 );
+
 
 CREATE TABLE IF NOT EXISTS conversation_sessions (
   id SERIAL PRIMARY KEY,

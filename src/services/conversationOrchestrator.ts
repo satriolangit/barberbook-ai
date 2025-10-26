@@ -4,6 +4,7 @@ import {
 } from "../config/conversationFlow";
 import { getSession, updateSession, clearSession } from "./sessionManager";
 import { getMissingSlots, mergeEntities } from "../utils/slotUtils";
+import { createBooking } from "./bookingService";
 
 /**
  * Daftar intent yang masih termasuk dalam konteks booking
@@ -130,6 +131,19 @@ export async function runConversationOrchestrator(
     const confirmFlow = ConversationFlows["confirm_booking"];
     const confirm = confirmFlow.states.find((s) => s.name === "confirm");
     if (confirm) {
+      const bookingData = {
+        user_id: userId,
+        customer_name: mergedEntities.customer_name,
+        service_name: mergedEntities.service_name,
+        date: mergedEntities.date,
+        time: mergedEntities.time,
+        barber_name: mergedEntities.barber_name || null,
+        payment_method: mergedEntities.payment_method || null,
+      };
+
+      // FOR NOW DISABLED CREATE BOOKING
+      await createBooking(bookingData);
+
       await clearSession(userId);
       return {
         reply: confirm.action.message,
