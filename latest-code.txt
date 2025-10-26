@@ -1,0 +1,656 @@
+========================================
+FILE: /Users/wahyu/iCloud/barberbook/ai/mvp/src/app.ts
+========================================
+import express from "express";
+import dotenv from "dotenv";
+import chatRouter from "./routes/chat";
+dotenv.config();
+
+const app = express();
+app.use(express.json());
+app.use("/simulate", chatRouter); // single entry to simulate user messages
+
+export default app;
+
+========================================
+FILE: /Users/wahyu/iCloud/barberbook/ai/mvp/src/config/prompt.ts
+========================================
+export const SYSTEM_PROMPT = `
+Kamu adalah **BarberBot**, asisten virtual untuk aplikasi barbershop **Barberbook**.
+Tugasmu adalah memahami setiap pesan pengguna dan mengembalikan hasil analisis
+dalam bentuk intent dan entities agar sistem backend dapat memproses permintaan tersebut.
+
+---
+
+## 🎯 TUJUAN
+1. Memahami maksud (intent) dari pesan pengguna.
+2. Mengambil data penting (entities) seperti layanan, tanggal, waktu, nama barber, dsb.
+3. Memberikan respons dalam bentuk:
+   - **Teks natural** jika percakapan ringan (sapaan, terima kasih, dsb).
+   - **JSON valid** jika terkait booking atau informasi layanan barbershop.
+
+---
+
+## 💬 FORMAT OUTPUT
+
+### Jika percakapan ringan:
+Balas langsung dalam teks natural (bukan JSON).
+
+### Jika terkait booking atau layanan:
+Kembalikan **JSON VALID** dengan format berikut:
+
+\`\`\`json
+{
+  "intent": "<intent>",
+  "entities": {
+    "customer_name": null,
+    "service_name": null,
+    "date": null,
+    "time": null,
+    "barber_name": null,
+    "payment_method": null,
+    "payment_status": null,
+    "booking_id": null
+  }
+}
+\`\`\`
+
+Tidak boleh menambahkan teks lain di luar JSON.
+
+---
+
+## 🧩 DAFTAR INTENT YANG HARUS DIKENALI
+
+### 1️⃣ Percakapan Ringan
+| Intent | Contoh | Output |
+|---------|---------|---------|
+| greeting | "Halo", "Selamat pagi", "Hai Barberbot" | Teks natural |
+| smalltalk | "Apa kabar?", "Terima kasih", "Lagi rame gak?" | Teks natural |
+| farewell | "Sampai jumpa", "Dadah", "Makasih ya" | Teks natural |
+| help | "Gimana cara booking?", "Bisa bantu saya?" | Teks natural |
+
+---
+
+### 2️⃣ Informasi Layanan
+| Intent | Deskripsi | Contoh |
+|---------|------------|---------|
+| ask_services | Menanyakan layanan yang tersedia | "Ada layanan apa aja?" |
+| ask_prices | Menanyakan harga layanan tertentu | "Berapa harga creambath?" |
+| ask_availability | Menanyakan ketersediaan jadwal/barber | "Ada slot besok jam 3?" |
+| ask_queue_status | Menanyakan antrian saat ini | "Sekarang ramai gak?" |
+
+---
+
+### 3️⃣ Booking Flow
+| Intent | Deskripsi | Contoh |
+|---------|------------|---------|
+| start_booking | Membuat booking baru | "Saya mau potong rambut besok jam 3" |
+| change_booking_time | Mengubah waktu booking | "Ganti jamnya jadi jam 5 sore" |
+| confirm_booking | Mengonfirmasi data booking | "Ya, betul", "Lanjut aja" |
+| cancel_booking | Membatalkan booking | "Batalkan booking saya" |
+| check_booking_status | Menanyakan status booking | "Booking saya udah dikonfirmasi belum?" |
+| choose_payment_method | Menentukan metode pembayaran | "Bayar pakai cash aja" |
+
+---
+
+### 4️⃣ Error & Recovery
+| Intent | Deskripsi | Output |
+|---------|------------|--------|
+| unknown_intent | Jika tidak memahami maksud pengguna | Teks: "Maaf, aku kurang paham maksudmu 😅. Bisa dijelaskan lagi?" |
+
+---
+
+## 📦 ENTITIES YANG DIGUNAKAN
+| Field | Deskripsi | Contoh |
+|--------|------------|--------|
+| customer_name | Nama pelanggan | "Budi" |
+| service_name | Jenis layanan | "potong rambut", "shaving" |
+| date | Tanggal booking (format ISO) | "2025-10-25" |
+| time | Waktu booking (format 24 jam) | "15:00" |
+| barber_name | Nama barber | "Reza" |
+| payment_method | Cara bayar | "cash", "transfer" |
+| payment_status | Status pembayaran | "pending", "paid" |
+| booking_id | ID booking (jika disebut) | "15" |
+
+---
+
+## ⚙️ ATURAN OUTPUT
+1. Gunakan **JSON valid** untuk intent selain percakapan ringan.  
+2. Jangan menambahkan penjelasan di luar JSON.  
+3. Gunakan bahasa **Indonesia natural dan sopan**.  
+4. Jika entitas tidak disebut, isi dengan \`null\`.  
+5. Jika tidak yakin, gunakan:
+   \`\`\`json
+   {"intent": "unknown_intent"}
+   \`\`\`
+6. Jangan menjawab hal di luar topik barbershop.  
+   Jika user bicara di luar konteks (misal "pesan pizza"), jawab:  
+   > Maaf, aku hanya bisa membantu urusan barbershop dan booking Barberbook ya ✂️
+
+---
+
+## 🧠 CONTOH OUTPUT
+
+**User:** "Berapa harga potong rambut?"
+\`\`\`json
+{
+  "intent": "ask_prices",
+  "entities": {
+    "customer_name": null,
+    "service_name": "potong rambut",
+    "date": null,
+    "time": null,
+    "barber_name": null,
+    "payment_method": null,
+    "payment_status": null,
+    "booking_id": null
+  }
+}
+\`\`\`
+
+**User:** "Saya mau potong rambut besok jam 3 sore."
+\`\`\`json
+{
+  "intent": "start_booking",
+  "entities": {
+    "customer_name": null,
+    "service_name": "potong rambut",
+    "date": "2025-10-25",
+    "time": "15:00",
+    "barber_name": null,
+    "payment_method": null,
+    "payment_status": null,
+    "booking_id": null
+  }
+}
+\`\`\`
+
+**User:** "Ada slot besok jam 2?"
+\`\`\`json
+{
+  "intent": "ask_availability",
+  "entities": {
+    "customer_name": null,
+    "service_name": null,
+    "date": "2025-10-25",
+    "time": "14:00",
+    "barber_name": null,
+    "payment_method": null,
+    "payment_status": null,
+    "booking_id": null
+  }
+}
+\`\`\`
+
+**User:** "Halo Barberbot!"
+> Halo! Selamat datang di Barberbook ✂️ Mau potong rambut atau shaving hari ini?
+
+---
+
+## CATATAN
+- Kamu hanya melakukan analisis intent & entities.
+- Sistem backend akan mengambil keputusan dan menindaklanjuti hasilmu.
+- Pastikan JSON yang kamu hasilkan **valid dan bisa diparse tanpa error**.
+- Jangan berimajinasi di luar domain barbershop.
+- Hari ini adalah ${new Date().toISOString().split("T")[0]}.
+Gunakan tanggal ini untuk interpretasi kata seperti "hari ini", "besok", atau "lusa".
+`;
+
+========================================
+FILE: /Users/wahyu/iCloud/barberbook/ai/mvp/src/config/db.ts
+========================================
+import dotenv from "dotenv";
+import pg from "pg";
+
+dotenv.config();
+
+const { Pool } = pg;
+
+// Setup automatic conversion for numeric types
+pg.types.setTypeParser(pg.types.builtins.NUMERIC, (val) => {
+  return val === null ? null : parseFloat(val);
+});
+
+pg.types.setTypeParser(pg.types.builtins.INT2, (val) => {
+  return val === null ? null : parseInt(val, 10);
+});
+
+pg.types.setTypeParser(pg.types.builtins.INT4, (val) => {
+  return val === null ? null : parseInt(val, 10);
+});
+
+pg.types.setTypeParser(pg.types.builtins.INT8, (val) => {
+  return val === null ? null : parseInt(val, 10);
+});
+
+// Optional: Handle timestamps
+pg.types.setTypeParser(pg.types.builtins.TIMESTAMP, (val) => {
+  return val === null ? null : new Date(val);
+});
+
+const pool = new Pool({
+  user: process.env.DB_USER || "postgres",
+  host: process.env.DB_HOST || "localhost",
+  database: process.env.DB_NAME || "bukubon_db",
+  password: process.env.DB_PASSWORD || "bukubon123",
+  port: (process.env.DB_PORT as number | undefined) || 5432,
+});
+
+export default pool;
+
+========================================
+FILE: /Users/wahyu/iCloud/barberbook/ai/mvp/src/controllers/chatController.ts
+========================================
+import { Request, Response } from "express";
+import { analyzeMessage } from "../services/geminiOrchestrator";
+import { runConversationOrchestrator } from "../services/conversationOrchestrator";
+import { saveLog } from "../services/logService";
+import { updateSession, clearSession } from "../services/sessionManager";
+
+export async function simulateChat(req: Request, res: Response) {
+  try {
+    const userId = req.body.user_id || req.body.phone || "unknown_user";
+    const userMessage = req.body.message?.trim();
+
+    if (!userMessage) {
+      return res.status(400).json({ error: "Message is required" });
+    }
+
+    // 🧾 [1] Simpan pesan user ke log
+    await saveLog(userId, "user", userMessage, "pending", null);
+
+    // 🤖 [2] Analisis pesan menggunakan Gemini (AI intent + entities)
+    const { intent, entities, direct_reply } = await analyzeMessage(
+      userMessage,
+      userId
+    );
+
+    // 💬 [3] Jika AI mengembalikan smalltalk atau direct reply → balas langsung
+    if (intent === "smalltalk" && direct_reply) {
+      await saveLog(userId, "assistant", direct_reply, intent, {});
+      return res.json({
+        reply: direct_reply,
+        intent,
+        entities,
+        mode: "direct_reply",
+        next_state: "idle",
+      });
+    }
+
+    // ❓ [4] Jika intent tidak diketahui → fallback
+    if (!intent || intent === "unknown_intent") {
+      const fallback =
+        "Saya belum memahami maksud Anda 😅 Bisa dijelaskan sedikit lebih detail?";
+      await saveLog(userId, "assistant", fallback, "unknown_intent", {});
+      return res.json({
+        reply: fallback,
+        intent: "unknown_intent",
+        entities: {},
+        mode: "fallback",
+        next_state: "idle",
+      });
+    }
+
+    // 🧠 [5] Jalankan Conversation Orchestrator (slot filling / flow logic)
+    const result = await runConversationOrchestrator(userId, intent, entities);
+
+    // 🗂️ [6] Simpan response bot ke log
+    await saveLog(userId, "assistant", result.reply, intent, result.data);
+
+    // 🔄 [7] Update atau hapus session sesuai status
+    if (result.mode === "completed" || result.nextState === "idle") {
+      await clearSession(userId);
+    } else {
+      await updateSession(userId, result.nextState, {
+        intent,
+        ...result.data,
+      });
+    }
+
+    // 📤 [8] Kirim hasil ke frontend
+    return res.json({
+      reply: result.reply,
+      intent,
+      entities: result.data,
+      mode: result.mode,
+      next_state: result.nextState,
+    });
+  } catch (err) {
+    console.error("❌ Error in handleChat:", err);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+}
+
+========================================
+FILE: /Users/wahyu/iCloud/barberbook/ai/mvp/src/services/geminiClient.ts
+========================================
+import { GoogleGenerativeAI } from "@google/generative-ai";
+const client = new GoogleGenerativeAI(
+  process.env.GEMINI_API_KEY ?? "AIzaSyDkDbR8Fig4nUxf8wEUmkkncC2eqijOc5E"
+);
+const model = process.env.GEMINI_MODEL_NAME ?? "gemini-2.5-flash";
+
+export function getGeminiModel() {
+  return client.getGenerativeModel({ model: model });
+}
+
+========================================
+FILE: /Users/wahyu/iCloud/barberbook/ai/mvp/src/services/geminiOrchestrator.ts
+========================================
+import dotenv from "dotenv";
+import { getGeminiModel } from "./geminiClient";
+import { SYSTEM_PROMPT } from "../config/prompt";
+import { getSession } from "./sessionManager";
+
+dotenv.config();
+
+export async function analyzeMessage(message: string, userId: string) {
+  // 🧠 Ambil session user (jika ada)
+  const session = await getSession(userId);
+  const contextIntent = session?.data?.intent || null;
+  const contextState = session?.state || "idle";
+  const contextEntities = session?.data || {};
+
+  // 🧩 Bangun konteks percakapan untuk prompt
+  const contextBlock = `
+KONTEKS SAAT INI:
+Intent aktif: ${contextIntent ?? "none"}
+State saat ini: ${contextState}
+Entitas yang sudah diketahui:
+${JSON.stringify(contextEntities, null, 2)}
+
+Pesan user: "${message}"
+`;
+
+  // 🧱 Gabungkan system prompt dan konteks user
+  const fullPrompt = `${SYSTEM_PROMPT}
+
+---
+
+Gunakan konteks di bawah ini untuk menentukan intent dan entities.
+Jika pesan ini adalah lanjutan dari flow booking (misalnya user menyebut tanggal atau jam),
+maka intent-nya tetap "start_booking" dan lengkapi entitas yang relevan.
+
+${contextBlock}
+`;
+
+  // 🧩 Panggil Gemini
+  const model = getGeminiModel();
+
+  const result = await model.generateContent({
+    contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
+  });
+
+  const textResponse = result.response.text();
+
+  // 🧼 Bersihkan markdown dan karakter tambahan
+  const cleaned = textResponse
+    .replace(/```json/i, "")
+    .replace(/```/g, "")
+    .trim();
+
+  // 🧩 Coba parse JSON
+  try {
+    const parsed = JSON.parse(cleaned);
+
+    // Validasi output minimal
+    if (!parsed.intent) parsed.intent = "unknown_intent";
+    if (!parsed.entities) parsed.entities = {};
+
+    // Fallback ke intent lama jika AI tidak yakin
+    if (
+      (parsed.intent === "unknown" || parsed.intent === "unknown_intent") &&
+      contextIntent &&
+      contextIntent !== "unknown_intent"
+    ) {
+      parsed.intent = contextIntent;
+    }
+
+    return parsed;
+  } catch (err) {
+    console.error("⚠️ Gemini parse error:", err, "\nRaw output:", textResponse);
+
+    const trimmed = textResponse.trim();
+    const isLikelyJSON = /^[{\\[]/.test(trimmed);
+
+    if (!isLikelyJSON) {
+      // plain text → smalltalk / direct reply
+      return {
+        intent: "smalltalk",
+        direct_reply: trimmed,
+        entities: {},
+      };
+    }
+
+    // Kembalikan default agar sistem tidak crash
+    return {
+      intent: contextIntent || "unknown_intent",
+      entities: {},
+    };
+  }
+}
+
+========================================
+FILE: /Users/wahyu/iCloud/barberbook/ai/mvp/src/services/conversationOrchestrator.ts
+========================================
+import {
+  ConversationFlows,
+  ConversationFlowsType,
+} from "../config/conversationFlow";
+import { getSession, updateSession, clearSession } from "./sessionManager";
+import { getMissingSlots, mergeEntities } from "../utils/slotUtils";
+import { createBooking, buildBookingSummary } from "./bookingService";
+
+/**
+ * Refactored Conversation Orchestrator
+ *
+ * Goals:
+ * - Soft intent switching (don't clear session aggressively)
+ * - Preserve useful context when user asks info in the middle of a booking
+ * - Support stateless one-shot info intents without losing booking context
+ * - Merge "parent" required slots when switching between related flows
+ */
+
+const STATELESS_INTENTS = [
+  // ADJUSTMENT: intents that should be handled as one-shot info replies
+  "ask_services",
+  "ask_prices",
+  "ask_queue_status",
+  "help",
+];
+
+export async function runConversationOrchestrator(
+  userId: string,
+  intent: string,
+  entities: Record<string, any> = {}
+) {
+  // 🔄 Check if stateless intent (info query without changing session)
+  if (STATELESS_INTENTS.includes(intent)) {
+    return handleStatelessIntent(intent, entities);
+  }
+
+  // 🧠 Get current session
+  const session = await getSession(userId);
+  const sessionIntent = session?.data?.intent || null;
+  const sessionState = session?.state || "idle";
+
+  // Determine flow and target state
+  let targetFlow: ConversationFlowsType | null = null;
+  let isSwitching = false;
+
+  // Check if this is a continuation of existing flow
+  if (sessionIntent && sessionState !== "idle") {
+    if (intent !== sessionIntent) {
+      // Intent switch detected
+      isSwitching = true;
+      // For now, we'll let the new intent take over
+      targetFlow = ConversationFlows[intent as keyof typeof ConversationFlows] || null;
+    } else {
+      // Same intent - continue existing flow
+      targetFlow = ConversationFlows[sessionIntent as keyof typeof ConversationFlows] || null;
+    }
+  } else {
+    // New intent - start new flow
+    targetFlow = ConversationFlows[intent as keyof typeof ConversationFlows] || null;
+  }
+
+  // Handle unknown intents
+  if (!targetFlow) {
+    return {
+      reply: "Saya bisa bantu booking potong rambut, tanya harga, atau cek ketersediaan. Mau bantu apa hari ini?",
+      data: entities,
+      mode: "idle",
+      nextState: "idle",
+    };
+  }
+
+  // Merge new entities with session entities
+  const currentEntities = session?.data || {};
+  const mergedEntities = mergeEntities(currentEntities, entities);
+  mergedEntities.intent = intent; // Preserve intent
+
+  // Check if all required slots are filled
+  const missingSlots = getMissingSlots(mergedEntities, targetFlow.required_slots);
+
+  if (missingSlots.length === 0) {
+    // All required slots filled
+    if (intent === "start_booking") {
+      // Create booking
+      try {
+        const bookingId = await createBooking(userId, mergedEntities);
+        const summary = buildBookingSummary(mergedEntities, bookingId);
+        return {
+          reply: ` booking telah dibuat 🎉\n\n${summary}\n\nTerima kasih sudah booking di Barberbook!`,
+          data: mergedEntities,
+          mode: "completed",
+          nextState: "idle",
+        };
+      } catch (error) {
+        console.error("Booking creation error:", error);
+        return {
+          reply: "Maaf, ada kendala saat membuat booking. Bisa dicoba lagi?",
+          data: mergedEntities,
+          mode: "error",
+          nextState: "idle",
+        };
+      }
+    } else {
+      return {
+        reply: "Proses selesai! Ada yang bisa dibantu lagi?",
+        data: mergedEntities,
+        mode: "completed",
+        nextState: "idle",
+      };
+    }
+  } else {
+    // Missing slots - ask for them
+    const nextSlot = missingSlots[0];
+    const question = targetFlow.questions?.[nextSlot] || `Kamu ingin booking untuk tanggal berapa?`;
+
+    return {
+      reply: question,
+      data: mergedEntities,
+      mode: "slot_filling",
+      nextState: `${intent}_${nextSlot}`, // e.g., "start_booking_date"
+    };
+  }
+}
+
+function handleStatelessIntent(
+  intent: string,
+  entities: Record<string, any>
+): any {
+  switch (intent) {
+    case "ask_services":
+      return {
+        reply: "Kami menyediakan layanan: potong rambut (Rp 40.000), cukur jenggot (Rp 30.000), hair coloring (Rp 100.000), styling (Rp 50.000), dan creambath (Rp 35.000).",
+        data: entities,
+        mode: "info_reply",
+        nextState: "idle",
+      };
+
+    case "ask_prices":
+      const service = entities.service_name || "potong rambut";
+      const priceMap: Record<string, string> = {
+        "potong rambut": "Rp 40.000",
+        "cukur jenggot": "Rp 30.000",
+        "hair coloring": "Rp 100.000",
+        styling: "Rp 50.000",
+        creambath: "Rp 35.000",
+      };
+      const price = priceMap[service.toLowerCase()] || "harga bervariasi";
+      return {
+        reply: `Harga ${service} adalah ${price}.`,
+        data: entities,
+        mode: "info_reply",
+        nextState: "idle",
+      };
+
+    case "ask_availability":
+      return {
+        reply: "Untuk tanggal dan jam yang Anda inginkan, silakan sebutkan tanggal dan waktunya agar saya bisa cek ketersediaan barber untuk Anda.",
+        data: entities,
+        mode: "info_reply",
+        nextState: "idle",
+      };
+
+    case "help":
+      return {
+        reply: "Saya BarberBot! Saya bisa bantu Anda booking jadwal potong rambut, tanya harga layanan, cek ketersediaan barber, atau jawab pertanyaan seputar layanan kami.",
+        data: entities,
+        mode: "info_reply",
+        nextState: "idle",
+      };
+
+    default:
+      return {
+        reply: "Silakan ulangi permintaan Anda.",
+        data: {},
+        mode: "fallback",
+        nextState: "idle",
+      };
+  }
+}
+
+========================================
+FILE: /Users/wahyu/iCloud/barberbook/ai/mvp/src/services/sessionManager.ts
+========================================
+import pool from "../config/db";
+
+export async function getSession(userId: string) {
+  const { rows } = await pool.query(
+    "SELECT * FROM conversation_sessions WHERE user_id=$1 LIMIT 1",
+    [userId]
+  );
+  return rows[0] || null;
+}
+
+export async function updateSession(
+  userId: string,
+  state: string,
+  data: Record<string, any>
+) {
+  await pool.query(
+    `INSERT INTO conversation_sessions(user_id, state, data, updated_at)
+     VALUES($1, $2, $3, NOW())
+     ON CONFLICT (user_id)
+     DO UPDATE SET state=$2, data=$3, updated_at=NOW()`,
+    [userId, state, JSON.stringify(data)]
+  );
+}
+
+export async function clearSession(userId: string) {
+  await pool.query(`DELETE FROM conversation_sessions WHERE user_id=$1`, [
+    userId,
+  ]);
+}
+
+========================================
+FILE: /Users/wahyu/iCloud/barberbook/ai/mvp/src/index.ts
+========================================
+import app from "./app";
+
+const port = process.env.PORT || 4000;
+app.listen(port, () => {
+  console.log(`Barberbook MVP listening on port ${port}`);
+});
