@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS customers (
 CREATE TABLE IF NOT EXISTS bookings (
   id SERIAL PRIMARY KEY,
   user_id VARCHAR(50) NOT NULL,
+  customer_name VARCHAR(100) NOT NULL,
   service_name VARCHAR(100) NOT NULL,
   date DATE NOT NULL,
   time TIME NOT NULL,
@@ -18,7 +19,6 @@ CREATE TABLE IF NOT EXISTS bookings (
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
 );
-
 
 CREATE TABLE IF NOT EXISTS conversation_sessions (
   id SERIAL PRIMARY KEY,
