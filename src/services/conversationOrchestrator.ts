@@ -4,44 +4,27 @@ import {
 } from "../config/conversationFlow";
 import { getSession, updateSession, clearSession } from "./sessionManager";
 import { getMissingSlots, mergeEntities } from "../utils/slotUtils";
-import { createBooking } from "./bookingService";
+import { createBooking, buildBookingSummary } from "./bookingService";
 
 /**
- * Daftar intent yang masih termasuk dalam konteks booking
- * Jadi meskipun AI mendeteksi intent lain, sistem tetap di flow 'start_booking'
+ * 🧠 Barberbook Conversation Orchestrator (Final Version)
+ * -------------------------------------------------------
+ * - Semua intent (booking & informasi) diproses via ConversationFlows.
+ * - Tidak lagi menggunakan handleInfoIntent / isInfoIntent.
+ * - Mendukung context inheritance dan automatic state transition.
  */
-const RELATED_BOOKING_INTENTS = [
-  "start_booking",
-  "provide_information",
-  "ask_availability",
-  "confirm_booking",
-];
-
 export async function runConversationOrchestrator(
   userId: string,
   intent: string,
   entities: Record<string, any> = {}
 ) {
-  // Ambil session aktif
+  // 🧩 [1] Ambil session aktif (jika ada)
   const session = await getSession(userId);
-
   let currentIntent = session?.data?.intent || intent;
   let currentState = session?.state || "idle";
   let currentData = session?.data || {};
 
-  // 🧠 Jika sedang dalam flow booking dan intent masih berhubungan, pertahankan
-  if (
-    session &&
-    session.data?.intent === "start_booking" &&
-    RELATED_BOOKING_INTENTS.includes(intent)
-  ) {
-    // Biarkan confirm_booking lewat sebagai flow baru
-    if (intent !== "confirm_booking") {
-      intent = "start_booking";
-    }
-  }
-
-  // Jika intent sekarang unknown tapi sesi masih aktif → pakai intent lama
+  // 🧠 [2] Context Carry-Over: gunakan intent lama jika yang baru tidak jelas
   if (
     (intent === "unknown" || intent === "unknown_intent") &&
     currentIntent &&
@@ -51,7 +34,23 @@ export async function runConversationOrchestrator(
     intent = currentIntent;
   }
 
-  let flow = ConversationFlows[intent];
+  // 🔁 [3] Context Inheritance: isi entity kosong dari session sebelumnya
+  for (const key of Object.keys(currentData)) {
+    if (entities[key] === null || entities[key] === undefined) {
+      entities[key] = currentData[key];
+    }
+  }
+
+  // 🚀 [4] Auto-switch antar flow:
+  // jika intent berbeda dari sesi sebelumnya, reset session (fresh start)
+  if (session && session.data?.intent && session.data.intent !== intent) {
+    await clearSession(userId);
+    currentData = {};
+    currentState = "idle";
+  }
+
+  // 🧩 [5] Ambil flow berdasarkan intent aktif
+  const flow = ConversationFlows[intent];
   if (!flow) {
     return {
       reply: "Maaf, aku belum paham maksudmu 😅.",
@@ -61,16 +60,16 @@ export async function runConversationOrchestrator(
     };
   }
 
-  // Gabungkan entity lama dan baru
+  // 🔗 [6] Merge entity lama + baru
   const mergedEntities = mergeEntities(currentData, entities);
 
-  // Ambil daftar slot wajib dari flow
+  // 🎯 [7] Cari slot wajib yang belum terisi
   const missingSlots = getMissingSlots(
     mergedEntities,
     flow.required_slots || []
   );
 
-  // Jika masih ada slot kosong → tanya satu per satu
+  // 🧩 [8] Jika masih ada slot kosong → tanya 1 per 1
   if (missingSlots.length > 0) {
     const nextSlot = missingSlots[0];
     const nextState = `awaiting_${nextSlot}`;
@@ -91,7 +90,7 @@ export async function runConversationOrchestrator(
     }
   }
 
-  // ✅ Semua slot terisi → review
+  // ✅ [9] Semua slot sudah terisi → cari state dengan nama "review_booking" (kalau ada)
   if (missingSlots.length === 0) {
     const review = flow.states.find((s) => s.name === "review_booking");
     if (review) {
@@ -110,26 +109,11 @@ export async function runConversationOrchestrator(
     }
   }
 
-  // ✅ Tangani redirect ke confirm_booking flow
-  if (flow.intent === "start_booking" && intent === "confirm_booking") {
-    flow = ConversationFlows["confirm_booking"];
-    const confirm = flow.states.find((s) => s.name === "confirm");
-
-    if (confirm) {
-      await clearSession(userId);
-      return {
-        reply: confirm.action.message,
-        nextState: "completed",
-        data: mergedEntities,
-        mode: "completed",
-      };
-    }
-  }
-
-  // ✅ Jika intent memang confirm_booking sejak awal
+  // ✅ [10] Jika intent adalah confirm_booking → simpan booking & akhiri flow
   if (intent === "confirm_booking") {
     const confirmFlow = ConversationFlows["confirm_booking"];
     const confirm = confirmFlow.states.find((s) => s.name === "confirm");
+
     if (confirm) {
       const bookingData = {
         user_id: userId,
@@ -141,30 +125,47 @@ export async function runConversationOrchestrator(
         payment_method: mergedEntities.payment_method || null,
       };
 
-      // FOR NOW DISABLED CREATE BOOKING
-      await createBooking(bookingData);
-
+      const booking = await createBooking(bookingData);
       await clearSession(userId);
+
       return {
-        reply: confirm.action.message,
+        reply: buildBookingSummary(booking),
         nextState: "completed",
         mode: "completed",
       };
     }
   }
 
-  // ❌ Default fallback
+  // ✅ [11] Jika flow punya state tunggal (misal intent informasi seperti ask_prices)
+  const infoState = flow.states.find((s) => s.trigger.includes(intent));
+  if (infoState && infoState.action?.message) {
+    const message = fillTemplate(infoState.action.message, mergedEntities);
+
+    await clearSession(userId); // intent info → one-shot, tidak perlu simpan sesi
+    return {
+      reply: message,
+      nextState: "idle",
+      data: mergedEntities,
+      mode: "info",
+    };
+  }
+
+  // ❌ [12] Fallback terakhir
   return {
     reply:
-      "Bisa tolong jelaskan lebih jelas? Saya belum menangkap maksudnya 😊",
+      "Tolong jelaskan sekali lagi ? Saya masih belum menangkap maksudnya 😊",
     nextState: currentState,
     data: mergedEntities,
     mode: "fallback",
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/* 🧩 Utility Functions */
+/* -------------------------------------------------------------------------- */
+
 /**
- * Utility untuk mengisi template dengan data entity
+ * Utility untuk mengganti {{entity}} di template pesan
  */
 function fillTemplate(template: string, data: Record<string, any>) {
   return template.replace(/{{(.*?)}}/g, (_, key) => {

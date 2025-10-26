@@ -18,6 +18,9 @@ export type ConversationFlowsType = {
 };
 
 export const ConversationFlows: ConversationFlowsType = {
+  // ======================================================
+  // 🧾 BOOKING FLOW
+  // ======================================================
   start_booking: {
     intent: "start_booking",
     description: "Flow percakapan untuk membuat booking baru di Barberbook.",
@@ -91,7 +94,7 @@ export const ConversationFlows: ConversationFlowsType = {
         action: {
           type: "template",
           message:
-            "Baik, berikut detail booking Anda:\n- Layanan: {{service_name}}\n- Tanggal: {{date}}\n- Jam: {{time}}\n{{#if barber_name}}- Barber: {{barber_name}}{{/if}}\nApakah sudah benar?",
+            "Baik, berikut detail booking Anda:\n- Nama: {{customer_name}}\n- Layanan: {{service_name}}\n- Tanggal: {{date}}\n- Jam: {{time}}\n{{#if barber_name}}- Barber: {{barber_name}}{{/if}}\nApakah sudah benar?",
         },
         next_state: "awaiting_confirmation",
       },
@@ -129,12 +132,16 @@ export const ConversationFlows: ConversationFlowsType = {
         trigger: ["end_of_flow"],
         action: {
           type: "reply",
-          message: "Booking selesai.",
+          message: "Booking selesai. Sampai jumpa di Barberbook! 💈",
         },
         next_state: "idle",
       },
     ],
   },
+
+  // ======================================================
+  // ✅ CONFIRM BOOKING FLOW
+  // ======================================================
   confirm_booking: {
     intent: "confirm_booking",
     description: "Flow untuk menyelesaikan booking setelah review.",
@@ -157,6 +164,141 @@ export const ConversationFlows: ConversationFlowsType = {
         action: {
           type: "reply",
           message: "Booking selesai. Sampai jumpa di Barberbook! 💈",
+        },
+        next_state: "idle",
+      },
+    ],
+  },
+
+  // ======================================================
+  // 💬 INFORMATIVE INTENTS (non-booking)
+  // ======================================================
+
+  // 🪞 ask_services
+  ask_services: {
+    intent: "ask_services",
+    description: "Menjawab pertanyaan tentang layanan yang tersedia.",
+    required_slots: [],
+    optional_slots: [],
+    states: [
+      {
+        name: "respond_info",
+        trigger: ["ask_services"],
+        action: {
+          type: "reply",
+          message:
+            "Kami menyediakan layanan berikut:\n💇 Potong Rambut\n🧔 Shaving\n💆 Cuci & Pijat Kepala\n💈 Creambath",
+        },
+        next_state: "idle",
+      },
+    ],
+  },
+
+  // 💸 ask_prices
+  ask_prices: {
+    intent: "ask_prices",
+    description: "Memberikan informasi harga layanan tertentu.",
+    required_slots: ["service_name"],
+    optional_slots: [],
+    states: [
+      {
+        name: "awaiting_service_name",
+        condition: { missing: "service_name" },
+        trigger: [],
+        action: {
+          type: "ask",
+          message:
+            "Untuk layanan apa ya? (contoh: potong rambut, shaving, creambath)",
+        },
+        next_state: "respond_info",
+      },
+      {
+        name: "respond_info",
+        trigger: ["ask_prices"],
+        action: {
+          type: "reply",
+          message: "Harga untuk layanan *{{service_name}}* adalah Rp50.000 💰", // 🧠 sementara statis, nanti bisa dynamic dari DB
+        },
+        next_state: "idle",
+      },
+    ],
+  },
+
+  // ⏰ ask_availability
+  ask_availability: {
+    intent: "ask_availability",
+    description:
+      "Menjawab pertanyaan tentang ketersediaan jadwal/barber di tanggal tertentu.",
+    required_slots: ["date", "time"],
+    optional_slots: ["barber_name", "service_name"],
+    states: [
+      {
+        name: "awaiting_date",
+        condition: { missing: "date" },
+        trigger: [],
+        action: {
+          type: "ask",
+          message: "Untuk tanggal berapa ingin dicek ketersediaannya?",
+        },
+        next_state: "awaiting_time",
+      },
+      {
+        name: "awaiting_time",
+        condition: { missing: "time" },
+        trigger: [],
+        action: {
+          type: "ask",
+          message: "Jam berapa kamu ingin datang?",
+        },
+        next_state: "respond_info",
+      },
+      {
+        name: "respond_info",
+        trigger: ["ask_availability"],
+        action: {
+          type: "reply",
+          message:
+            "Untuk memastikan ketersediaan jadwal, sebutkan tanggal dan jam yang kamu inginkan ya ✂️",
+        },
+        next_state: "idle",
+      },
+    ],
+  },
+
+  // 🚶 ask_queue_status
+  ask_queue_status: {
+    intent: "ask_queue_status",
+    description: "Menjawab pertanyaan tentang kondisi antrian di barbershop.",
+    required_slots: [],
+    optional_slots: [],
+    states: [
+      {
+        name: "respond_info",
+        trigger: ["ask_queue_status"],
+        action: {
+          type: "reply",
+          message:
+            "Saat ini antrian cukup santai 😎 Rata-rata waktu tunggu sekitar 10–15 menit.",
+        },
+        next_state: "idle",
+      },
+    ],
+  },
+
+  // 🆘 help
+  help: {
+    intent: "help",
+    description: "Memberikan panduan penggunaan chatbot Barberbook.",
+    required_slots: [],
+    optional_slots: [],
+    states: [
+      {
+        name: "respond_help",
+        trigger: ["help"],
+        action: {
+          type: "reply",
+          message:
+            "Saya bisa bantu kamu untuk booking layanan, cek harga, atau menanyakan ketersediaan barber. Mau mulai booking sekarang? 💈",
         },
         next_state: "idle",
       },

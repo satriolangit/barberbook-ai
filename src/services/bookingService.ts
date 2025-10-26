@@ -1,6 +1,18 @@
-import pool from "../config/db";
+/**
+ * bookingService.ts
+ * ----------------------------------------------
+ * 🎯 Service layer untuk menangani semua operasi booking Barberbook
+ * - Dipanggil oleh ConversationOrchestrator saat user konfirmasi booking
+ * - Berisi logika CRUD + helper untuk ketersediaan dan konfirmasi
+ * ----------------------------------------------
+ */
 
-export interface BookingData {
+import db from "../config/db";
+
+/* -------------------------------------------------------------------------- */
+/* 🧾 CREATE BOOKING */
+/* -------------------------------------------------------------------------- */
+export async function createBooking(bookingData: {
   user_id: string;
   customer_name: string;
   service_name: string;
@@ -8,92 +20,107 @@ export interface BookingData {
   time: string;
   barber_name?: string | null;
   payment_method?: string | null;
-  payment_status?: string | null;
+}) {
+  // ✅ Simpan data booking ke database
+  const result = await db.query(
+    `
+    INSERT INTO bookings 
+      (user_id, customer_name, service_name, date, time, barber_name, payment_method, status)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,'pending')
+    RETURNING 
+      id, customer_name, service_name, date, time, barber_name, payment_method, status
+  `,
+    [
+      bookingData.user_id,
+      bookingData.customer_name,
+      bookingData.service_name,
+      bookingData.date,
+      bookingData.time,
+      bookingData.barber_name,
+      bookingData.payment_method,
+    ]
+  );
+
+  return result.rows[0];
 }
 
+/* -------------------------------------------------------------------------- */
+/* 🔍 CHECK AVAILABILITY */
+/* -------------------------------------------------------------------------- */
 /**
- * Membuat booking baru di tabel bookings
+ * Mengecek apakah slot waktu tertentu masih tersedia.
+ * - Jika barber_name disertakan → periksa khusus barber itu.
+ * - Jika tidak → periksa global (semua barber).
  */
-export async function createBooking(data: BookingData) {
-  const {
-    user_id,
-    customer_name,
-    service_name,
-    date,
-    time,
-    barber_name = null,
-    payment_method = null,
-    payment_status = "pending",
-  } = data;
+export async function checkAvailability(
+  date: string,
+  time: string,
+  barberName?: string
+): Promise<boolean> {
+  const query = barberName
+    ? `SELECT COUNT(*) FROM bookings WHERE date=$1 AND time=$2 AND barber_name=$3`
+    : `SELECT COUNT(*) FROM bookings WHERE date=$1 AND time=$2`;
 
-  try {
-    const result = await pool.query(
-      `
-      INSERT INTO bookings 
-        (user_id, customer_name, service_name, date, time, barber_name, payment_method, payment_status, status, created_at)
-      VALUES 
-        ($1, $2, $3, $4, $5, $6, $7, $8, 'confirmed', NOW())
-      RETURNING id, customer_name user_id, service_name, date, time, barber_name, payment_status, status;
-      `,
-      [
-        user_id,
-        customer_name,
-        service_name,
-        date,
-        time,
-        barber_name,
-        payment_method,
-        payment_status,
-      ]
-    );
+  const values = barberName ? [date, time, barberName] : [date, time];
+  const result = await db.query(query, values);
+  const count = parseInt(result.rows[0].count, 10);
 
-    return result.rows[0];
-  } catch (error) {
-    console.error("❌ Gagal menyimpan booking:", error);
-    throw new Error("Database error: gagal membuat booking.");
-  }
+  return count === 0; // true = tersedia
 }
 
+/* -------------------------------------------------------------------------- */
+/* 📋 BUILD BOOKING SUMMARY */
+/* -------------------------------------------------------------------------- */
 /**
- * Mengecek status booking terakhir user
+ * Utility untuk membangun pesan konfirmasi booking
+ * yang ramah pengguna dan informatif.
  */
-export async function getLastBooking(userId: string) {
-  try {
-    const result = await pool.query(
-      `
-      SELECT * FROM bookings 
-      WHERE user_id = $1 
-      ORDER BY created_at DESC 
-      LIMIT 1;
-      `,
-      [userId]
-    );
-
-    return result.rows[0] || null;
-  } catch (error) {
-    console.error("⚠️ Gagal mengambil booking terakhir:", error);
-    return null;
-  }
+export function buildBookingSummary(booking: Record<string, any>): string {
+  return (
+    `✅ Booking berhasil disimpan!\n\n` +
+    `📋 Detail Booking:\n` +
+    `- Nama: ${booking.customer_name}\n` +
+    `- Layanan: ${booking.service_name}\n` +
+    `- Tanggal: ${booking.date}\n` +
+    `- Jam: ${booking.time}\n` +
+    (booking.barber_name ? `- Barber: ${booking.barber_name}\n` : "") +
+    (booking.payment_method
+      ? `- Metode Pembayaran: ${booking.payment_method}\n`
+      : "") +
+    `\nTerima kasih sudah memilih Barberbook 💈`
+  );
 }
 
+/* -------------------------------------------------------------------------- */
+/* 🔄 GET USER BOOKINGS */
+/* -------------------------------------------------------------------------- */
 /**
- * Mengupdate status booking
+ * Mendapatkan daftar booking user (berguna untuk fitur "cek booking saya").
  */
-export async function updateBookingStatus(bookingId: number, status: string) {
-  try {
-    const result = await pool.query(
-      `
-      UPDATE bookings
-      SET status = $2, updated_at = NOW()
-      WHERE id = $1
-      RETURNING *;
-      `,
-      [bookingId, status]
-    );
+export async function getBookingsByUser(userId: string) {
+  const result = await db.query(
+    `
+    SELECT id, customer_name, service_name, date, time, barber_name, payment_method, status
+    FROM bookings
+    WHERE user_id = $1
+    ORDER BY date DESC, time DESC
+  `,
+    [userId]
+  );
 
-    return result.rows[0] || null;
-  } catch (error) {
-    console.error("⚠️ Gagal update status booking:", error);
-    return null;
-  }
+  return result.rows;
+}
+
+/* -------------------------------------------------------------------------- */
+/* ❌ CANCEL BOOKING (future extension) */
+/* -------------------------------------------------------------------------- */
+/**
+ * Membatalkan booking tertentu.
+ */
+export async function cancelBooking(bookingId: string) {
+  const result = await db.query(
+    `UPDATE bookings SET status='cancelled' WHERE id=$1 RETURNING *`,
+    [bookingId]
+  );
+  return result.rows[0];
 }
