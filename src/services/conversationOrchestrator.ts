@@ -4,7 +4,12 @@ import {
 } from "../config/conversationFlow";
 import { getSession, updateSession, clearSession } from "./sessionManager";
 import { getMissingSlots, mergeEntities } from "../utils/slotUtils";
-import { createBooking, buildBookingSummary } from "./bookingService";
+import {
+  createBooking,
+  buildBookingSummary,
+  getAvailableBarber,
+  getAvailableBarberWithLock,
+} from "./bookingService";
 
 /**
  * Refactored Conversation Orchestrator
@@ -177,7 +182,27 @@ export async function runConversationOrchestrator(
 
   // [11] All required slots satisfied → proceed to review or the flow's next action
   if (missingSlots.length === 0) {
+    // check availibility before proceeding to review
+    const availableBarber = await getAvailableBarberWithLock(
+      mergedEntities.date,
+      mergedEntities.time
+    );
+
+    if (!availableBarber) {
+      return {
+        reply: `Maaf, semua barber penuh pada ${mergedEntities.date} jam ${mergedEntities.time}. Mau pilih waktu lain?`,
+        nextState: "awaiting_time",
+        data: mergedEntities,
+        mode: "availability_conflict",
+      };
+    }
+
+    mergedEntities.barber_name = availableBarber.barber_name;
+    mergedEntities.barber_id = availableBarber.id;
+
+    // valid
     const review = flow.states.find((s) => s.name === "review_booking");
+
     if (review) {
       const message = fillTemplate(review.action.message, mergedEntities);
       // ADJUSTMENT: update session to review state (store entities)
@@ -197,7 +222,31 @@ export async function runConversationOrchestrator(
 
   if (intent === "change_booking") {
     // Jangan clear session, cukup update data dengan entitas baru
-    const merged = mergeEntities(currentData, entities);
+    let merged = mergeEntities(currentData, entities);
+
+    // validate barber availibilty
+    if (merged.date && merged.time) {
+      if (
+        currentState === "awaiting_date" ||
+        currentState === "awaiting_time"
+      ) {
+        const availableBarber = await getAvailableBarberWithLock(
+          merged.date,
+          merged.time
+        );
+        if (!availableBarber) {
+          return {
+            reply: `Maaf, semua barber penuh pada ${merged.date} jam ${merged.time}. Mau pilih waktu lain?`,
+            nextState: "awaiting_time",
+            data: merged,
+            mode: "availability_conflict",
+          };
+        }
+        merged.barber_name = availableBarber.name;
+        merged.barber_id = availableBarber.id;
+      }
+    }
+
     await updateSession(userId, "review_booking", {
       intent: "start_booking",
       ...merged,
@@ -226,6 +275,21 @@ export async function runConversationOrchestrator(
     const confirm = confirmFlow?.states.find((s) => s.name === "confirm");
 
     if (confirm) {
+      // double check booking availibility
+      const availableBarber = await getAvailableBarberWithLock(
+        mergedEntities.date,
+        mergedEntities.time
+      );
+
+      if (!availableBarber) {
+        return {
+          reply: `Maaf, ternyata slot ini baru saja diambil pelanggan lain 😅 Mau pilih waktu lain?`,
+          nextState: "awaiting_time",
+          data: mergedEntities,
+          mode: "availability_conflict",
+        };
+      }
+
       const bookingData = {
         user_id: userId,
         customer_name: mergedEntities.customer_name,
@@ -234,6 +298,8 @@ export async function runConversationOrchestrator(
         time: mergedEntities.time,
         barber_name: mergedEntities.barber_name || null,
         payment_method: mergedEntities.payment_method || null,
+        status: "confirmed",
+        barber_id: mergedEntities.barber_id,
       };
 
       // Create booking in DB

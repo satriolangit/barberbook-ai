@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS bookings (
   status VARCHAR(20) DEFAULT 'confirmed',
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
+  barber_id INTEGER REFERENCES barbers(id)
 );
 
 CREATE TABLE IF NOT EXISTS conversation_sessions (
@@ -37,3 +38,12 @@ CREATE TABLE IF NOT EXISTS conversation_logs (
   entities JSONB,
   created_at TIMESTAMP DEFAULT NOW()
 );
+
+CREATE TABLE barbers (
+  id SERIAL PRIMARY KEY,
+  barber_name VARCHAR(100) NOT NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
