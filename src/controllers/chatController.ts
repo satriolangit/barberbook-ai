@@ -59,6 +59,8 @@ export async function simulateChat(req: Request, res: Response) {
     // 🧠 [5] Jalankan Conversation Orchestrator (slot filling / flow logic)
     const result = await runConversationOrchestrator(userId, intent, entities);
 
+    console.log(`[AI] ${userId} intent=${intent} mode=${result.mode}`);
+
     // 🗂️ [6] Simpan response bot ke log
     const latestSession = await getSession(userId);
     await saveLog(

@@ -22,6 +22,7 @@ const STATELESS_INTENTS = [
   "ask_prices",
   "ask_queue_status",
   "help",
+  "cancel_booking",
 ];
 
 export async function runConversationOrchestrator(
@@ -59,7 +60,13 @@ export async function runConversationOrchestrator(
   // The previous behavior always cleared session on intent change which caused context loss.
   const prevIntent = session?.data?.intent || null;
   const isBookingRelated = (i: string | null) =>
-    !!i && ["start_booking", "ask_availability", "confirm_booking"].includes(i);
+    !!i &&
+    [
+      "start_booking",
+      "ask_availability",
+      "confirm_booking",
+      "change_booking",
+    ].includes(i);
 
   if (session && prevIntent && prevIntent !== intent) {
     if (isBookingRelated(prevIntent) && isBookingRelated(intent)) {
@@ -188,6 +195,31 @@ export async function runConversationOrchestrator(
     }
   }
 
+  if (intent === "change_booking") {
+    // Jangan clear session, cukup update data dengan entitas baru
+    const merged = mergeEntities(currentData, entities);
+    await updateSession(userId, "review_booking", {
+      intent: "start_booking",
+      ...merged,
+    });
+
+    if (currentIntent === "start_booking") {
+      if (currentState.startsWith("awaiting_")) {
+        intent = "start_booking";
+      }
+    }
+
+    return {
+      reply: fillTemplate(
+        "Oke, data booking kamu sudah diperbarui:\n- Layanan: {{service_name}}\n- Tanggal: {{date}}\n- Jam: {{time}}\n{{#if barber_name}}- Barber: {{barber_name}}{{/if}}\nApakah sudah benar?",
+        merged
+      ),
+      nextState: "review_booking",
+      data: merged,
+      mode: "review_update",
+    };
+  }
+
   // [12] If user explicitly confirms booking -> create booking, clear session and reply
   if (intent === "confirm_booking") {
     const confirmFlow = ConversationFlows["confirm_booking"];
@@ -218,6 +250,27 @@ export async function runConversationOrchestrator(
         nextState: "completed",
         data: {},
         mode: "completed",
+      };
+    }
+  }
+
+  // [13] If user explicitly cancels booking
+  // TODO : Booking cancel flow
+  if (intent === "cancel_booking") {
+    if (session && session.data?.intent === "start_booking") {
+      await clearSession(userId);
+      return {
+        reply: "Booking kamu sudah dibatalkan ✂️",
+        nextState: "idle",
+        data: {},
+        mode: "canceled",
+      };
+    } else {
+      return {
+        reply: "Tidak ada booking aktif yang bisa dibatalkan 😅",
+        nextState: "idle",
+        data: {},
+        mode: "no_booking",
       };
     }
   }

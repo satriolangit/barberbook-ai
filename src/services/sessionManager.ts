@@ -27,3 +27,7 @@ export async function clearSession(userId: string) {
     userId,
   ]);
 }
+
+export async function clearAllSessions() {
+  await pool.query(`DELETE FROM conversation_sessions`);
+}

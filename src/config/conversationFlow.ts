@@ -171,6 +171,74 @@ export const ConversationFlows: ConversationFlowsType = {
   },
 
   // ======================================================
+  //  CANCEL BOOKING FLOW
+  // ======================================================
+  cancel_booking: {
+    intent: "cancel_booking",
+    description: "Membatalkan proses booking yang sedang berlangsung.",
+    required_slots: [],
+    optional_slots: [],
+    states: [
+      {
+        name: "respond_info",
+        trigger: ["cancel_booking"],
+        action: {
+          type: "reply",
+          message:
+            "Oke, booking kamu sudah dibatalkan. Kalau mau buat jadwal baru, tinggal bilang ya.",
+        },
+        next_state: "idle",
+      },
+    ],
+  },
+
+  change_booking: {
+    intent: "change_booking",
+    description:
+      "Menangani perubahan detail booking (tanggal, waktu, layanan, nama, dll).",
+    required_slots: [], // karena user bisa menyebut salah satu saja
+    optional_slots: [
+      "customer_name",
+      "service_name",
+      "date",
+      "time",
+      "barber_name",
+    ],
+    states: [
+      {
+        name: "awaiting_field",
+        trigger: ["change_booking"],
+        action: {
+          type: "ask",
+          message:
+            "Bagian mana yang ingin Anda ubah? (tanggal, waktu, layanan, atau nama?)",
+        },
+        next_state: "awaiting_correction",
+      },
+      {
+        name: "awaiting_correction",
+        condition: { missing: "field_to_change" },
+        trigger: [],
+        action: {
+          type: "ask",
+          message: "Silakan sebutkan nilai yang baru",
+        },
+        next_state: "review_booking",
+      },
+      {
+        name: "review_booking",
+        trigger: ["provide_information"],
+        action: {
+          type: "template",
+          message:
+            "Oke, sudah saya ubah. Berikut detail booking terbaru Anda:\n- Nama: {{customer_name}}\n- Layanan: {{service_name}}\n- Tanggal: {{date}}\n- Jam: {{time}}\n{{#if barber_name}}- Barber: {{barber_name}}{{/if}}\nApakah sudah benar?",
+        },
+        next_state: "awaiting_confirmation",
+      },
+    ],
+  },
+
+  // ======================================================
   // 💬 INFORMATIVE INTENTS (non-booking)
   // ======================================================
 
