@@ -4,7 +4,12 @@ import {
 } from "../config/conversationFlow";
 import { getSession, updateSession, clearSession } from "./sessionManager";
 import { getMissingSlots, mergeEntities } from "../utils/slotUtils";
-import { createBooking, buildBookingSummary } from "./bookingService";
+import {
+  createBooking,
+  buildBookingSummary,
+  getAvailableBarber,
+  getAvailableBarberWithLock,
+} from "./bookingService";
 
 /**
  * Refactored Conversation Orchestrator
@@ -22,6 +27,7 @@ const STATELESS_INTENTS = [
   "ask_prices",
   "ask_queue_status",
   "help",
+  "cancel_booking",
 ];
 
 export async function runConversationOrchestrator(
@@ -59,7 +65,13 @@ export async function runConversationOrchestrator(
   // The previous behavior always cleared session on intent change which caused context loss.
   const prevIntent = session?.data?.intent || null;
   const isBookingRelated = (i: string | null) =>
-    !!i && ["start_booking", "ask_availability", "confirm_booking"].includes(i);
+    !!i &&
+    [
+      "start_booking",
+      "ask_availability",
+      "confirm_booking",
+      "change_booking",
+    ].includes(i);
 
   if (session && prevIntent && prevIntent !== intent) {
     if (isBookingRelated(prevIntent) && isBookingRelated(intent)) {
@@ -170,7 +182,41 @@ export async function runConversationOrchestrator(
 
   // [11] All required slots satisfied → proceed to review or the flow's next action
   if (missingSlots.length === 0) {
+    // check availibility before proceeding to review
+
+    console.log("validate availability start ===>");
+
+    const duration = mergedEntities.service_duration || 30;
+    const start = new Date(`${mergedEntities.date}T${mergedEntities.time}:00`);
+    const end = new Date(start.getTime() + duration * 60000);
+    const endTime = `${end.getHours().toString().padStart(2, "0")}:${end
+      .getMinutes()
+      .toString()
+      .padStart(2, "0")}`;
+
+    const availableBarber = await getAvailableBarberWithLock(
+      mergedEntities.date,
+      mergedEntities.time,
+      endTime
+    );
+
+    console.log("available barber ===>", availableBarber);
+
+    if (!availableBarber) {
+      return {
+        reply: `Maaf, semua barber penuh pada ${mergedEntities.date} jam ${mergedEntities.time}. Mau pilih waktu lain?`,
+        nextState: "awaiting_time",
+        data: mergedEntities,
+        mode: "availability_conflict",
+      };
+    }
+
+    mergedEntities.barber_name = availableBarber.barber_name;
+    mergedEntities.barber_id = availableBarber.id;
+
+    // valid
     const review = flow.states.find((s) => s.name === "review_booking");
+
     if (review) {
       const message = fillTemplate(review.action.message, mergedEntities);
       // ADJUSTMENT: update session to review state (store entities)
@@ -188,12 +234,98 @@ export async function runConversationOrchestrator(
     }
   }
 
+  if (intent === "change_booking") {
+    // Jangan clear session, cukup update data dengan entitas baru
+    let merged = mergeEntities(currentData, entities);
+
+    // validate barber availibilty
+    if (merged.date && merged.time) {
+      if (
+        currentState === "awaiting_date" ||
+        currentState === "awaiting_time"
+      ) {
+        const duration = merged.service_duration || 30;
+        const start = new Date(`${merged.date}T${merged.time}:00`);
+        const end = new Date(start.getTime() + duration * 60000);
+        const endTime = `${end.getHours().toString().padStart(2, "0")}:${end
+          .getMinutes()
+          .toString()
+          .padStart(2, "0")}`;
+
+        const availableBarber = await getAvailableBarberWithLock(
+          merged.date,
+          merged.time,
+          endTime
+        );
+
+        if (!availableBarber) {
+          return {
+            reply: `Maaf, semua barber penuh pada ${merged.date} jam ${merged.time}. Mau pilih waktu lain?`,
+            nextState: "awaiting_time",
+            data: merged,
+            mode: "availability_conflict",
+          };
+        }
+        merged.barber_name = availableBarber.name;
+        merged.barber_id = availableBarber.id;
+      }
+    }
+
+    await updateSession(userId, "review_booking", {
+      intent: "start_booking",
+      ...merged,
+    });
+
+    if (currentIntent === "start_booking") {
+      if (currentState.startsWith("awaiting_")) {
+        intent = "start_booking";
+      }
+    }
+
+    return {
+      reply: fillTemplate(
+        "Oke, data booking kamu sudah diperbarui:\n- Layanan: {{service_name}}\n- Tanggal: {{date}}\n- Jam: {{time}}\n{{#if barber_name}}- Barber: {{barber_name}}{{/if}}\nApakah sudah benar?",
+        merged
+      ),
+      nextState: "review_booking",
+      data: merged,
+      mode: "review_update",
+    };
+  }
+
   // [12] If user explicitly confirms booking -> create booking, clear session and reply
   if (intent === "confirm_booking") {
     const confirmFlow = ConversationFlows["confirm_booking"];
     const confirm = confirmFlow?.states.find((s) => s.name === "confirm");
 
     if (confirm) {
+      // double check booking availibility
+
+      const duration = mergedEntities.service_duration || 30;
+      const start = new Date(
+        `${mergedEntities.date}T${mergedEntities.time}:00`
+      );
+      const end = new Date(start.getTime() + duration * 60000);
+      const endTime = `${end.getHours().toString().padStart(2, "0")}:${end
+        .getMinutes()
+        .toString()
+        .padStart(2, "0")}`;
+
+      const availableBarber = await getAvailableBarberWithLock(
+        mergedEntities.date,
+        mergedEntities.time,
+        endTime
+      );
+
+      if (!availableBarber) {
+        return {
+          reply: `Maaf, ternyata slot ini baru saja diambil pelanggan lain 😅 Mau pilih waktu lain?`,
+          nextState: "awaiting_time",
+          data: mergedEntities,
+          mode: "availability_conflict",
+        };
+      }
+
       const bookingData = {
         user_id: userId,
         customer_name: mergedEntities.customer_name,
@@ -202,6 +334,10 @@ export async function runConversationOrchestrator(
         time: mergedEntities.time,
         barber_name: mergedEntities.barber_name || null,
         payment_method: mergedEntities.payment_method || null,
+        status: "confirmed",
+        barber_id: mergedEntities.barber_id,
+        service_id: mergedEntities.service_id,
+        end_time: endTime,
       };
 
       // Create booking in DB
@@ -218,6 +354,27 @@ export async function runConversationOrchestrator(
         nextState: "completed",
         data: {},
         mode: "completed",
+      };
+    }
+  }
+
+  // [13] If user explicitly cancels booking
+  // TODO : Booking cancel flow
+  if (intent === "cancel_booking") {
+    if (session && session.data?.intent === "start_booking") {
+      await clearSession(userId);
+      return {
+        reply: "Booking kamu sudah dibatalkan ✂️",
+        nextState: "idle",
+        data: {},
+        mode: "canceled",
+      };
+    } else {
+      return {
+        reply: "Tidak ada booking aktif yang bisa dibatalkan 😅",
+        nextState: "idle",
+        data: {},
+        mode: "no_booking",
       };
     }
   }

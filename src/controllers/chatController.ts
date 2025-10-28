@@ -2,7 +2,11 @@ import { Request, Response } from "express";
 import { analyzeMessage } from "../services/geminiOrchestrator";
 import { runConversationOrchestrator } from "../services/conversationOrchestrator";
 import { saveLog } from "../services/logService";
-import { updateSession, clearSession } from "../services/sessionManager";
+import {
+  updateSession,
+  clearSession,
+  getSession,
+} from "../services/sessionManager";
 
 export async function simulateChat(req: Request, res: Response) {
   try {
@@ -23,10 +27,14 @@ export async function simulateChat(req: Request, res: Response) {
     );
 
     // 💬 [3] Jika AI mengembalikan smalltalk atau direct reply → balas langsung
-    if (intent === "smalltalk" && direct_reply) {
+    if (intent === "smalltalk" && (direct_reply || entities?.direct_reply)) {
+      const replyText =
+        direct_reply ||
+        entities?.direct_reply ||
+        "Baik, ada yang bisa saya bantu lagi?";
       await saveLog(userId, "assistant", direct_reply, intent, {});
       return res.json({
-        reply: direct_reply,
+        reply: replyText,
         intent,
         entities,
         mode: "direct_reply",
@@ -51,8 +59,17 @@ export async function simulateChat(req: Request, res: Response) {
     // 🧠 [5] Jalankan Conversation Orchestrator (slot filling / flow logic)
     const result = await runConversationOrchestrator(userId, intent, entities);
 
+    console.log(`[AI] ${userId} intent=${intent} mode=${result.mode}`);
+
     // 🗂️ [6] Simpan response bot ke log
-    await saveLog(userId, "assistant", result.reply, intent, result.data);
+    const latestSession = await getSession(userId);
+    await saveLog(
+      userId,
+      "assistant",
+      result.reply,
+      intent,
+      latestSession?.data || result.data
+    );
 
     // 🔄 [7] Update atau hapus session sesuai status
     if (result.mode === "completed" || result.nextState === "idle") {
