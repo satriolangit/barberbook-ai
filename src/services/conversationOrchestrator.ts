@@ -336,6 +336,8 @@ export async function runConversationOrchestrator(
         payment_method: mergedEntities.payment_method || null,
         status: "confirmed",
         barber_id: mergedEntities.barber_id,
+        service_id: mergedEntities.service_id,
+        end_time: endTime,
       };
 
       // Create booking in DB
