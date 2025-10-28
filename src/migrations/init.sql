@@ -17,8 +17,10 @@ CREATE TABLE IF NOT EXISTS bookings (
   payment_status VARCHAR(20) DEFAULT 'pending',
   status VARCHAR(20) DEFAULT 'confirmed',
   created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
-  barber_id INTEGER REFERENCES barbers(id)
+  updated_at TIMESTAMP DEFAULT NOW(),
+  barber_id INTEGER REFERENCES barbers(id),
+  service_id INTEGER REFERENCES services(id),
+  end_time TIME NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS conversation_sessions (
@@ -46,4 +48,13 @@ CREATE TABLE barbers (
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
 );
+
+CREATE TABLE services (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,
+  duration_minutes INTEGER NOT NULL DEFAULT 30,
+  price INTEGER DEFAULT 0,
+  embedding vector(1536)
+);
+
 

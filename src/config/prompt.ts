@@ -68,9 +68,9 @@ Tidak boleh menambahkan teks lain di luar JSON.
 | Intent | Deskripsi | Contoh |
 |---------|------------|---------|
 | start_booking | Membuat booking baru | "Saya mau potong rambut besok jam 3" |
-| change_booking | Mengubah data booking yang sedang berjalan (misalnya mengganti tanggal, waktu, layanan, nama pelanggan, atau barber). Jika user hanya menyebut perubahan satu elemen, ubah hanya elemen tersebut dan pertahankan field lainnya. | "Ganti jamnya jadi jam 5 sore", "Besok aja deh", "Bukan potong rambut, tapi shaving" |
+| change_booking | Mengubah data booking yang sedang berjalan (misalnya mengganti tanggal, waktu, layanan, nama pelanggan, atau barber). Jika user hanya menyebut perubahan satu elemen, ubah hanya elemen tersebut dan pertahankan field lainnya. | "Ganti jamnya jadi jam 5 sore", "Nggak jadi hari ini, besok aja deh", "Bukan potong rambut, tapi shaving" |
 | confirm_booking | Mengonfirmasi data booking | "Ya, betul", "Lanjut aja" |
-| cancel_booking | Membatalkan booking | "Batalkan booking saya" |
+| cancel_booking | Membatalkan booking | "Batalkan booking saya", "Cancel booking saya", "Saya ga jadi potong rambut", "Gak jadi potong rambut" |
 | check_booking_status | Menanyakan status booking | "Booking saya udah dikonfirmasi belum?" |
 | choose_payment_method | Menentukan metode pembayaran | "Bayar pakai cash aja" |
 

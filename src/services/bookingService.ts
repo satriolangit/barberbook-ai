@@ -8,6 +8,7 @@
  */
 
 import db from "../config/db";
+import { getEmbedding } from "./geminiClient";
 
 /* -------------------------------------------------------------------------- */
 /* 🧾 CREATE BOOKING */
@@ -22,15 +23,17 @@ export async function createBooking(bookingData: {
   payment_method?: string | null;
   status?: string | null;
   barber_id?: number | null;
+  service_id?: number | null;
+  end_time?: string | null;
 }) {
   // ✅ Simpan data booking ke database
   const result = await db.query(
     `
     INSERT INTO bookings 
-      (user_id, customer_name, service_name, date, time, barber_name, payment_method, status, barber_id)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8, $9)
+      (user_id, customer_name, service_name, date, time, barber_name, payment_method, status, barber_id, service_id, end_time)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, $10, $11)
     RETURNING 
-      id, customer_name, service_name, date, time, barber_name, payment_method, status, barber_id
+      id, customer_name, service_name, date, time, barber_name, payment_method, status, barber_id, service_id, end_time
   `,
     [
       bookingData.user_id,
@@ -42,6 +45,8 @@ export async function createBooking(bookingData: {
       bookingData.payment_method,
       bookingData.status ? bookingData.status : "pending",
       bookingData.barber_id ? bookingData.barber_id : null,
+      bookingData.service_id ? bookingData.service_id : null,
+      bookingData.end_time ? bookingData.end_time : null,
     ]
   );
 
@@ -150,24 +155,41 @@ export async function getAvailableBarber(date: string, time: string) {
   return result.rows[0] || null;
 }
 
-export async function getAvailableBarberWithLock(date: string, time: string) {
+/* -------------------------------------------------------------------------- */
+/* 🔄 GET AVAILABLE BARBERS WITH LOCK */
+/* -------------------------------------------------------------------------- */
+/**
+ * Mendapatkan daftar barber yang tersedia.
+ */
+export async function getAvailableBarberWithLock(
+  date: string,
+  startTime: string,
+  endTime: string
+) {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
 
     // Ambil 1 barber yang available, lock baris agar tidak dipakai user lain
-    const result = await client.query(
-      `
+    const sql = `
       SELECT id, barber_name FROM barbers
       WHERE is_active = true AND id NOT IN (
         SELECT barber_id FROM bookings
-        WHERE date = $1 AND time = $2 AND status = 'confirmed'
+        WHERE date = $1 AND (
+        (time, end_time) OVERLAPS ($2::time, $3::time)
+      ) 
+        AND status = 'confirmed'
       )
       FOR UPDATE SKIP LOCKED
       LIMIT 1
-      `,
-      [date, time]
-    );
+      `;
+
+    const params = [date, startTime, endTime];
+
+    console.log("getAvailableBarberWithLock ==>");
+    console.log(sql, params);
+
+    const result = await client.query(sql, params);
 
     const barber = result.rows[0];
 

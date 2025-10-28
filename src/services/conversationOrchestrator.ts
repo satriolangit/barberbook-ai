@@ -183,10 +183,24 @@ export async function runConversationOrchestrator(
   // [11] All required slots satisfied → proceed to review or the flow's next action
   if (missingSlots.length === 0) {
     // check availibility before proceeding to review
+
+    console.log("validate availability start ===>");
+
+    const duration = mergedEntities.service_duration || 30;
+    const start = new Date(`${mergedEntities.date}T${mergedEntities.time}:00`);
+    const end = new Date(start.getTime() + duration * 60000);
+    const endTime = `${end.getHours().toString().padStart(2, "0")}:${end
+      .getMinutes()
+      .toString()
+      .padStart(2, "0")}`;
+
     const availableBarber = await getAvailableBarberWithLock(
       mergedEntities.date,
-      mergedEntities.time
+      mergedEntities.time,
+      endTime
     );
+
+    console.log("available barber ===>", availableBarber);
 
     if (!availableBarber) {
       return {
@@ -230,10 +244,20 @@ export async function runConversationOrchestrator(
         currentState === "awaiting_date" ||
         currentState === "awaiting_time"
       ) {
+        const duration = merged.service_duration || 30;
+        const start = new Date(`${merged.date}T${merged.time}:00`);
+        const end = new Date(start.getTime() + duration * 60000);
+        const endTime = `${end.getHours().toString().padStart(2, "0")}:${end
+          .getMinutes()
+          .toString()
+          .padStart(2, "0")}`;
+
         const availableBarber = await getAvailableBarberWithLock(
           merged.date,
-          merged.time
+          merged.time,
+          endTime
         );
+
         if (!availableBarber) {
           return {
             reply: `Maaf, semua barber penuh pada ${merged.date} jam ${merged.time}. Mau pilih waktu lain?`,
@@ -276,9 +300,21 @@ export async function runConversationOrchestrator(
 
     if (confirm) {
       // double check booking availibility
+
+      const duration = mergedEntities.service_duration || 30;
+      const start = new Date(
+        `${mergedEntities.date}T${mergedEntities.time}:00`
+      );
+      const end = new Date(start.getTime() + duration * 60000);
+      const endTime = `${end.getHours().toString().padStart(2, "0")}:${end
+        .getMinutes()
+        .toString()
+        .padStart(2, "0")}`;
+
       const availableBarber = await getAvailableBarberWithLock(
         mergedEntities.date,
-        mergedEntities.time
+        mergedEntities.time,
+        endTime
       );
 
       if (!availableBarber) {
