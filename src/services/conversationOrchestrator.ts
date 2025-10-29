@@ -319,7 +319,7 @@ export async function runConversationOrchestrator(
 
       if (!availableBarber) {
         return {
-          reply: `Maaf, ternyata slot ini baru saja diambil pelanggan lain 😅 Mau pilih waktu lain?`,
+          reply: `Maaf, ternyata slot ini baru saja diambil pelanggan lain 😅 apakah anda mau pilih waktu lain?`,
           nextState: "awaiting_time",
           data: mergedEntities,
           mode: "availability_conflict",
